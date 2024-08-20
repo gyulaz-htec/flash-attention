@@ -43,7 +43,8 @@ def skip_config(*args, reproducible=True, skip_pct = 0.95):
     else:
         skip_seed = time.time()
     
-    print("skip_seed:", skip_seed)
+    if DEBUG:
+        print("skip_seed:", skip_seed)
     random.seed(config_str)
     
     
@@ -1049,8 +1050,8 @@ def test_flash_attn_output(
         if softcap != 0.0:
             pytest.skip("softcap not supported on AMD yet")
         
-        if causal == True:
-            pytest.skip("causal not supported on AMD yet")
+        # if causal == True:
+        #     pytest.skip("causal not supported on AMD yet")
 
         if local == True:
             pytest.skip("local sliding window attention not supported on AMD yet")
@@ -1380,8 +1381,8 @@ def test_flash_attn_varlen_output(
         if softcap != 0.0:
             pytest.skip("softcap not supported on AMD yet")
 
-        if causal == True:
-            pytest.skip("causal not supported on AMD yet")
+        # if causal == True:
+        #     pytest.skip("causal not supported on AMD yet")
 
         if test_backward == True:
             pytest.skip("Backward Attention not supported on AMD yet")

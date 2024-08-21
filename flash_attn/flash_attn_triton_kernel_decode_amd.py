@@ -1,3 +1,4 @@
+import math
 from typing import Optional
 import pytest
 import torch
@@ -638,6 +639,29 @@ def get_split_k(B: int, G: int, H: int, Mk: int) -> int:
     split_k = max(split_k, 1)
     return split_k
 
+
+def pad_to_power_of_2(tensor, dim=-1):
+    """Pad the last dimension of the tensor to the next power of 2."""
+    current_size = tensor.size(dim)
+    next_power_of_2 = 2 ** math.ceil(math.log2(current_size))
+    pad_size = next_power_of_2 - current_size
+    
+    if pad_size == 0:
+        return tensor
+    
+    pad_shape = list(tensor.shape)
+    pad_shape[dim] = pad_size
+    padding = torch.zeros(pad_shape, dtype=tensor.dtype, device=tensor.device)
+    return torch.cat([tensor, padding], dim=dim)
+
+def unpad_from_power_of_2(tensor, original_size, dim=-1):
+    """Remove padding from the last dimension of the tensor."""
+    return tensor.narrow(dim, 0, original_size)
+
+def needs_padding(size):
+    """Check if the given size needs padding to the next power of 2."""
+    return size & (size - 1) != 0
+
 class _attention(torch.autograd.Function):
 
     OPERATOR = _fwd_kernel_splitK
@@ -692,6 +716,18 @@ class _attention(torch.autograd.Function):
             raise ValueError("Layout not given")
 
         assert input_metadata.layout == "bsghd"
+
+        # Store original dmodel size
+        original_dmodel = q.shape[-1]
+        
+        # Check if padding is needed
+        if needs_padding(original_dmodel):
+            # Pad q, k, and v to the next power of 2
+            q = pad_to_power_of_2(q)
+            k = pad_to_power_of_2(k)
+            v = pad_to_power_of_2(v)
+
+            input_metadata.dmodel = q.shape[-1]
 
         # get dims
         batch_size, seqlen_q, n_group_q, heads_per_group_q, dim_q = q.shape
@@ -897,6 +933,9 @@ class _attention(torch.autograd.Function):
             # out=out.transpose(1, 2).contiguous() # this screws up heads and data.
             # the data is laid out properly. Just need to reshape dims
             out = out.reshape(batch_size, seqlen_q, -1, dim_q)
+
+        if needs_padding(original_dmodel):
+            out = unpad_from_power_of_2(out, original_dmodel)
 
         return out
 

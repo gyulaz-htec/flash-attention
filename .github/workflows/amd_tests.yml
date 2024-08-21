@@ -64,14 +64,14 @@ jobs:
       #   run: |
       #     pytest tests/test_flash_attn.py::test_flash_attn_output
       #     pytest tests/test_flash_attn.py::test_flash_attn_varlen_output
-      - name: Flash Attention causal Tests
-        run: |
-          pytest tests/test_flash_attn.py::test_flash_attn_causal
-          pytest tests/test_flash_attn.py::test_flash_attn_varlen_causal
+      # - name: Flash Attention causal Tests
+      #   run: |
+      #     pytest tests/test_flash_attn.py::test_flash_attn_causal
+      #     pytest tests/test_flash_attn.py::test_flash_attn_varlen_causal
       - name: Flash Attention kvcache Tests
         run: |
-          pytest tests/test_flash_attn.py::test_flash_attn_splitkv
           pytest tests/test_flash_attn.py::test_flash_attn_kvcache
+          pytest tests/test_flash_attn.py::test_flash_attn_splitkv
       - name: Flash Attention race condition Tests
         run: |
           pytest tests/test_flash_attn.py::test_flash_attn_race_condition

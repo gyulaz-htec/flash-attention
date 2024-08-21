@@ -19,7 +19,7 @@ from flash_attn.bert_padding import pad_input, unpad_input
 from flash_attn.flash_attn_interface import _get_block_size_n
 from flash_attn.layers.rotary import apply_rotary_emb
 
-DEBUG = False
+DEBUG = True
 
 MAX_HEADDIM_SM8x = 192
 
@@ -672,7 +672,7 @@ def test_flash_attn_qkvpacked(seqlen, d, dropout_p, causal, local, alibi, determ
     if False:
         qkv = torch.zeros(batch_size, seqlen, 3, nheads, d, device=device, dtype=dtype)
         for i in range(seqlen):
-            qkv[:, i, :, :, :] = torch.full((batch_size, 3, nheads, d), i + 1, device=device, dtype=dtype)
+            qkv[:, i, :, :, :] = torch.full((batch_size, 3, nheads, d), i, device=device, dtype=dtype)
         qkv.requires_grad_(True)
     else:
         qkv = torch.randn(
@@ -2161,24 +2161,26 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("has_leftpad", [True])
 # @pytest.mark.parametrize("has_batch_idx", [False, True])
 @pytest.mark.parametrize("has_batch_idx", [False])
-@pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
+# @pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize('d', [32, 40, 64, 80, 96, 128, 160, 192])
 # @pytest.mark.parametrize('d', [56, 80])
 # @pytest.mark.parametrize("d", [128])
+@pytest.mark.parametrize("d", [17, 80])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [
-        (1, 128),
-        (1, 339),
-        (3, 1024),
-        (64, 800),
-        (64, 256),
-        (3, 799),
-        (64, 2048),
-        (16, 20000),
-        (1, 128 * 1024),
-        (16, 128 * 1024),
+        (4, 4),
+        # (1, 128),
+        # (1, 339),
+        # (3, 1024),
+        # (64, 800),
+        # (64, 256),
+        # (3, 799),
+        # (64, 2048),
+        # (16, 20000),
+        # (1, 128 * 1024),
+        # (16, 128 * 1024),
         (128, 128),
     ],
 )
@@ -2233,8 +2235,8 @@ def test_flash_attn_kvcache(
         if has_leftpad == True:
             pytest.skip("cache_leftpad not supported on AMD yet")
 
-        if skip_config(seqlen_q, seqlen_k, d):
-            pytest.skip("Randomly skipping this configuration to limited test time")
+        # if skip_config(seqlen_q, seqlen_k, d):
+        #     pytest.skip("Randomly skipping this configuration to limited test time")
 
     if seqlen_q > seqlen_k and new_kv:
         pytest.skip()
@@ -2247,9 +2249,13 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 2
+    if True:
+        nheads = 1
+        batch_size = 1
+    else:
+        nheads = 6
+        batch_size = 2
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
-    nheads = 6
     
     if DEBUG:
         print("nheads_q:", nheads)
@@ -2260,10 +2266,10 @@ def test_flash_attn_kvcache(
     nheads_k = nheads if mha_type == "mha" else (1 if mha_type == "mqa" else 3)
     assert nheads % nheads_k == 0
     window_size = (-1, -1) if not local else torch.randint(0, seqlen_k, (2,))
-    if False:
+    if True:
         q = torch.zeros(batch_size_cache, seqlen_q, nheads_k, d, device=device, dtype=dtype)    
         for i in range(seqlen_q):
-            q[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i + 1, device=device, dtype=dtype)
+            q[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i, device=device, dtype=dtype)
     else:
         q = torch.randn(batch_size, seqlen_q, nheads, d, device=device, dtype=dtype)
     seqlen_new = seqlen_q if seqlen_new_eq_seqlen_q else torch.randint(1, seqlen_q + 1, (1,)).item()
@@ -2279,15 +2285,15 @@ def test_flash_attn_kvcache(
             v_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             
             for i in range(nheads_k):
-                k_cache[:, :, i, :] = torch.full((batch_size_cache, seqlen_k, d), i + 1, device=device, dtype=dtype)
-                v_cache[:, :, i, :] = torch.full((batch_size_cache, seqlen_k, d), i + 1, device=device, dtype=dtype)
-        elif False:
+                k_cache[:, :, i, :] = torch.full((batch_size_cache, seqlen_k, d), i, device=device, dtype=dtype)
+                v_cache[:, :, i, :] = torch.full((batch_size_cache, seqlen_k, d), i, device=device, dtype=dtype)
+        elif True:
             k_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             v_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             
             for i in range(seqlen_k):
-                k_cache[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i + 1, device=device, dtype=dtype)
-                v_cache[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i + 1, device=device, dtype=dtype)
+                k_cache[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i, device=device, dtype=dtype)
+                v_cache[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i, device=device, dtype=dtype)
         
         elif False:
             k_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)

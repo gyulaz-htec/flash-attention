@@ -8,7 +8,7 @@ import triton
 import triton.language as tl
 from flash_attn.flash_attn_triton_kernel_prefill_amd import MetaData
 
-DEBUG = False
+DEBUG = True
 
 def _strides(x: torch.Tensor, *stride_names: str):
     if x is None:
@@ -639,7 +639,6 @@ def get_split_k(B: int, G: int, H: int, Mk: int) -> int:
     split_k = max(split_k, 1)
     return split_k
 
-
 def pad_to_power_of_2(tensor, dim=-1):
     """Pad the last dimension of the tensor to the next power of 2."""
     current_size = tensor.size(dim)
@@ -678,13 +677,13 @@ class _attention(torch.autograd.Function):
     NAME = "triton_splitKF"
 
     @staticmethod
-    def forward(cls, q, k, v, input_metadata):
+    def forward(cls, q, k_cache, v_cache, input_metadata):
         if DEBUG:
             print()
             print("attention_decode.forward")
             print("q:", q, q.shape)
-            print("k:", k, k.shape)
-            print("v:", v, v.shape)
+            print("k:", k_cache, k_cache.shape)
+            print("v:", v_cache, v_cache.shape)
             print("input_metadata:", input_metadata)
 
         original_layout = input_metadata.layout
@@ -692,8 +691,8 @@ class _attention(torch.autograd.Function):
         # kernels expects "bsghd"
         if input_metadata.layout == "bshd":
             q=q.unsqueeze(2)
-            k=k.unsqueeze(2)
-            v=v.unsqueeze(2)
+            k_cache=k_cache.unsqueeze(2)
+            v_cache=v_cache.unsqueeze(2)
 
             if input_metadata.new_kv:
                 input_metadata.k_new = input_metadata.k_new.unsqueeze(2)
@@ -702,8 +701,8 @@ class _attention(torch.autograd.Function):
             input_metadata.layout = "bsghd"
         elif input_metadata.layout == "bhsd":
             q=q.permute(0, 2, 1, 3).unsqueeze(2)
-            k=k.permute(0, 2, 1, 3).unsqueeze(2)
-            v=v.permute(0, 2, 1, 3).unsqueeze(2)
+            k_cache=k_cache.permute(0, 2, 1, 3).unsqueeze(2)
+            v_cache=v_cache.permute(0, 2, 1, 3).unsqueeze(2)
             if input_metadata.new_kv:
                 input_metadata.k_new = input_metadata.k_new.permute(0, 2, 1, 3).unsqueeze(2)
                 input_metadata.v_new = input_metadata.v_new.permute(0, 2, 1, 3).unsqueeze(2)
@@ -724,18 +723,33 @@ class _attention(torch.autograd.Function):
         if needs_padding(original_dmodel):
             # Pad q, k, and v to the next power of 2
             q = pad_to_power_of_2(q)
-            k = pad_to_power_of_2(k)
-            v = pad_to_power_of_2(v)
+            k = pad_to_power_of_2(k_cache)
+            v = pad_to_power_of_2(v_cache)
+            if input_metadata.new_kv:
+                input_metadata.k_new = pad_to_power_of_2(input_metadata.k_new)
+                input_metadata.v_new = pad_to_power_of_2(input_metadata.v_new)
 
             input_metadata.dmodel = q.shape[-1]
+        else:
+            k = k_cache
+            v = v_cache
 
+        print("after padding")
+        print("q:", q, q.shape)
+        print("k:", k, k.shape)
+        print("v:", v, v.shape)
+        print("input_metadata:", input_metadata)
+        
+        
+        
         # get dims
         batch_size, seqlen_q, n_group_q, heads_per_group_q, dim_q = q.shape
         _, seqlen_k, n_group_k, heads_per_group_k, dim_k = k.shape
         _, seqlen_v, n_group_v, heads_per_group_v, dim_v = v.shape
 
-        print(f"batch_size = {batch_size}, seqlen_q = {seqlen_q}, group_q={n_group_q} heads_per_group_q = {heads_per_group_q}, dim_q = {dim_q}")
-        print(f"batch_size = {batch_size}, seqlen_k = {seqlen_k}, group_k={n_group_k} heads_per_group_k = {heads_per_group_k}, dim_k = {dim_k}")
+        if DEBUG:
+            print(f"batch_size = {batch_size}, seqlen_q = {seqlen_q}, group_q={n_group_q} heads_per_group_q = {heads_per_group_q}, dim_q = {dim_q}")
+            print(f"batch_size = {batch_size}, seqlen_k = {seqlen_k}, group_k={n_group_k} heads_per_group_k = {heads_per_group_k}, dim_k = {dim_k}")
 
         # Handle MQA/GQA case
         if heads_per_group_q > heads_per_group_k:
@@ -745,10 +759,11 @@ class _attention(torch.autograd.Function):
         else:
             input_metadata.is_gqa = False
 
-        print("input_metadata.is_gqa:", input_metadata.is_gqa)
-        print("After MQA/GQA check")
-        print(f"batch_size = {batch_size}, seqlen_q = {seqlen_q}, group_q={n_group_q} heads_per_group_q = {heads_per_group_q}, dim_q = {dim_q}")
-        print(f"batch_size = {batch_size}, seqlen_k = {seqlen_k}, group_k={n_group_k} heads_per_group_k = {heads_per_group_k}, dim_k = {dim_k}")
+        if DEBUG:
+            print("input_metadata.is_gqa:", input_metadata.is_gqa)
+            print("After MQA/GQA check")
+            print(f"batch_size = {batch_size}, seqlen_q = {seqlen_q}, group_q={n_group_q} heads_per_group_q = {heads_per_group_q}, dim_q = {dim_q}")
+            print(f"batch_size = {batch_size}, seqlen_k = {seqlen_k}, group_k={n_group_k} heads_per_group_k = {heads_per_group_k}, dim_k = {dim_k}")
 
         # context
         cls.SPLIT_K: Optional[int] = None
@@ -771,7 +786,8 @@ class _attention(torch.autograd.Function):
         #     q = q.transpose(1, 3)
         #     k = k[:, :, :, :1]
         #     v = v[:, :, :, :1]
-        print("mqa_swap_seqlen_head:", mqa_swap_seqlen_head)
+        if DEBUG:
+            print("mqa_swap_seqlen_head:", mqa_swap_seqlen_head)
         # assert mqa_swap_seqlen_head == False
 
         # Update dim_k if Quantized
@@ -803,8 +819,9 @@ class _attention(torch.autograd.Function):
         num_warps = 1
         split_size = (seqlen_k + split_k - 1) // split_k
         use_cache_seqlens = cache_seqlens is not None
-
-        print(f"batch_size = {batch_size}, group_q = {n_group_q}, heads_per_group_q = {heads_per_group_q}, split_k = {split_k}, seqlen_q_ceil = {seqlen_q_ceil}, dim_q = {dim_q}, num_of_wgs = {n_group_q * n_group_q * heads_per_group_q * split_k}")
+        
+        if DEBUG:
+            print(f"batch_size = {batch_size}, group_q = {n_group_q}, heads_per_group_q = {heads_per_group_q}, split_k = {split_k}, seqlen_q_ceil = {seqlen_q_ceil}, dim_q = {dim_q}, num_of_wgs = {n_group_q * n_group_q * heads_per_group_q * split_k}")
         
         if DEBUG:
             print("q:", q, q.shape)
@@ -879,7 +896,8 @@ class _attention(torch.autograd.Function):
         assert out.shape[-1] % k_block_num == 0
         k_block_size = out.shape[-1] // k_block_num
         grid = (batch_size * n_group_q * heads_per_group_q, seqlen_q, k_block_num)
-        print("grid:", grid)
+        if DEBUG:
+            print("grid:", grid)
 
 
         if DEBUG:
@@ -935,6 +953,9 @@ class _attention(torch.autograd.Function):
             out = out.reshape(batch_size, seqlen_q, -1, dim_q)
 
         if needs_padding(original_dmodel):
+            k_cache.set_(unpad_from_power_of_2(k, original_dmodel))
+            v_cache.set_(unpad_from_power_of_2(v, original_dmodel))
+
             out = unpad_from_power_of_2(out, original_dmodel)
 
         return out

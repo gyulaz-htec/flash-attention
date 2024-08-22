@@ -172,7 +172,7 @@ def _fwd_kernel_splitK(
 
     # Copy new Keys and Values into Cache
     if NEW_KV:
-        kn_base = K_new + k_head_idx * stride_kn_h + off_z * stride_kn_z + off_g_q * stride_kn_g
+        knew_base = K_new + k_head_idx * stride_kn_h + off_z * stride_kn_z + off_g_q * stride_kn_g
         
         # Determine the starting position for new data in the cache
         if USE_CACHE_SEQLENs:
@@ -184,31 +184,34 @@ def _fwd_kernel_splitK(
         for i in range(0, N_CTX_NEW, BLOCK_N):
             # Load from K_new
             k_new_block = tl.load(
-                kn_base + stride_kn_d * QUANTIZED * N_QUANT_GROUPS + 
-                tl.arange(0, ACTUAL_BLOCK_DMODEL)[:, None] * stride_kn_d +
+                knew_base + stride_kn_d * QUANTIZED * N_QUANT_GROUPS + 
+                tl.arange(0, BLOCK_DMODEL)[:, None] * stride_kn_d +
                 (tl.arange(0, BLOCK_N) + i)[None, :] * stride_kn_n,
-                mask=(tl.arange(0, BLOCK_N)[None, :] + i < N_CTX_NEW),
+                 mask=(tl.arange(0, BLOCK_N)[None, :] + i < N_CTX_NEW) &
+                     (tl.arange(0, BLOCK_DMODEL)[:, None] < ACTUAL_BLOCK_DMODEL),
                 other=0
             )
             
             # Store to K
             tl.store(
                 k_base + stride_kd * QUANTIZED * N_QUANT_GROUPS + 
-                tl.arange(0, ACTUAL_BLOCK_DMODEL)[:, None] * stride_kd +
+                tl.arange(0, BLOCK_DMODEL)[:, None] * stride_kd +
                 (tl.arange(0, BLOCK_N) + i + start_idx)[None, :] * stride_kn,
                 k_new_block,
-                mask=(tl.arange(0, BLOCK_N)[None, :] + i < N_CTX_NEW)
+                 mask=(tl.arange(0, BLOCK_N)[None, :] + i < N_CTX_NEW) &
+                     (tl.arange(0, BLOCK_DMODEL)[:, None] < ACTUAL_BLOCK_DMODEL),
             )
 
         # Copy new Values
-        vn_base = V_new + v_head_idx * stride_vn_h + off_z * stride_vn_z + off_g_q * stride_vn_g
+        vnew_base = V_new + v_head_idx * stride_vn_h + off_z * stride_vn_z + off_g_q * stride_vn_g
         for i in range(0, N_CTX_NEW, BLOCK_N):
             # Load from V_new
             v_new_block = tl.load(
-                vn_base + stride_vn_d * QUANTIZED * N_QUANT_GROUPS + 
+                vnew_base + stride_vn_d * QUANTIZED * N_QUANT_GROUPS + 
                 (tl.arange(0, BLOCK_N) + i)[:, None] * stride_vn_n +
-                tl.arange(0, ACTUAL_BLOCK_DMODEL)[None, :] * stride_vn_d,
-                mask=(tl.arange(0, BLOCK_N)[:, None] + i < N_CTX_NEW),
+                tl.arange(0, BLOCK_DMODEL)[None, :] * stride_vn_d,
+                mask=(tl.arange(0, BLOCK_N)[:, None] + i < N_CTX_NEW) &
+                     (tl.arange(0, BLOCK_DMODEL)[None, :] < ACTUAL_BLOCK_DMODEL),
                 other=0
             )
             
@@ -216,9 +219,10 @@ def _fwd_kernel_splitK(
             tl.store(
                 v_base + stride_vd * QUANTIZED * N_QUANT_GROUPS + 
                 (tl.arange(0, BLOCK_N) + i + start_idx)[:, None] * stride_vn +
-                tl.arange(0, ACTUAL_BLOCK_DMODEL)[None, :] * stride_vd,
+                tl.arange(0, BLOCK_DMODEL)[None, :] * stride_vd,
                 v_new_block,
-                mask=(tl.arange(0, BLOCK_N)[:, None] + i < N_CTX_NEW)
+                 mask=(tl.arange(0, BLOCK_N)[:, None] + i < N_CTX_NEW) &
+                     (tl.arange(0, BLOCK_DMODEL)[None, :] < ACTUAL_BLOCK_DMODEL),
             )
 
     Q_block_ptr = tl.make_block_ptr(

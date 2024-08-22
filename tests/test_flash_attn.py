@@ -278,7 +278,7 @@ def attention_ref(
         output: (batch_size, seqlen_q, nheads, head_dim)
         attention: (batch_size, nheads, seqlen_q, seqlen_k), softmax after dropout
     """
-    PRINT_DEBUG = DEBUG and upcast==True
+    PRINT_DEBUG = (DEBUG and upcast==False)
 
     if PRINT_DEBUG:
         print()
@@ -305,10 +305,16 @@ def attention_ref(
     k = repeat(k, "b s h d -> b s (h g) d", g=q.shape[2] // k.shape[2])
     v = repeat(v, "b s h d -> b s (h g) d", g=q.shape[2] // v.shape[2])
     d = q.shape[-1]
+    if PRINT_DEBUG:
+        print("k:", k, k.shape)
+        print("v:", v, v.shape)
+        print("d:", d)
     if not reorder_ops:
         scores = torch.einsum("bthd,bshd->bhts", q / math.sqrt(d), k)
     else:
         scores = torch.einsum("bthd,bshd->bhts", q, k / math.sqrt(d))
+    if PRINT_DEBUG:
+        print("scores:", scores, scores.shape)
     if softcap > 0:
         scores = scores / softcap
         scores = scores.tanh()
@@ -2142,8 +2148,8 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("mha_type", ["mha"])
 @pytest.mark.parametrize("new_kv", [False, True])
 # @pytest.mark.parametrize("new_kv", [False])
-@pytest.mark.parametrize("alibi", [False, True])
-# @pytest.mark.parametrize("alibi", [False])
+# @pytest.mark.parametrize("alibi", [False, True])
+@pytest.mark.parametrize("alibi", [False])
 @pytest.mark.parametrize("local", [False, True])
 # @pytest.mark.parametrize("local", [False])
 @pytest.mark.parametrize("causal", [False, True])
@@ -2252,7 +2258,7 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    if True:
+    if False:
         nheads = 1
         batch_size = 1
     else:
@@ -2270,9 +2276,9 @@ def test_flash_attn_kvcache(
     assert nheads % nheads_k == 0
     window_size = (-1, -1) if not local else torch.randint(0, seqlen_k, (2,))
     if True:
-        q = torch.zeros(batch_size_cache, seqlen_q, nheads_k, d, device=device, dtype=dtype)    
+        q = torch.zeros(batch_size_cache, seqlen_q, nheads, d, device=device, dtype=dtype)    
         for i in range(seqlen_q):
-            q[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i, device=device, dtype=dtype)
+            q[:, i, :, :] = torch.full((batch_size_cache, nheads, d), i, device=device, dtype=dtype)
     else:
         q = torch.randn(batch_size, seqlen_q, nheads, d, device=device, dtype=dtype)
     seqlen_new = seqlen_q if seqlen_new_eq_seqlen_q else torch.randint(1, seqlen_q + 1, (1,)).item()
@@ -2283,28 +2289,13 @@ def test_flash_attn_kvcache(
         k, v = None, None
     if paged_kv_block_size is None:
         # Increasing Cache
-        if False:
-            k_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
-            v_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
-            
-            for i in range(nheads_k):
-                k_cache[:, :, i, :] = torch.full((batch_size_cache, seqlen_k, d), i, device=device, dtype=dtype)
-                v_cache[:, :, i, :] = torch.full((batch_size_cache, seqlen_k, d), i, device=device, dtype=dtype)
-        elif True:
+        if True:
             k_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             v_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             
             for i in range(seqlen_k):
                 k_cache[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i, device=device, dtype=dtype)
                 v_cache[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i, device=device, dtype=dtype)
-        
-        elif False:
-            k_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
-            v_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
-            
-            values = torch.arange(1, d + 1, device=device, dtype=dtype).view(1, 1, 1, d)
-            k_cache[:, :, :, :] = values.expand(batch_size_cache, seqlen_k, nheads_k, d)
-            v_cache[:, :, :, :] = values.expand(batch_size_cache, seqlen_k, nheads_k, d)
         else:
             k_cache = torch.randn(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             v_cache = torch.randn(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)

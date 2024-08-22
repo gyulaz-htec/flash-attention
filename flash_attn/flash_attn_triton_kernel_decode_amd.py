@@ -390,7 +390,7 @@ def _fwd_kernel_splitK(
     # write back O
     O_block_ptr = tl.make_block_ptr(
         base=Out_splitK + off_zhg * stride_osk_zhg + splitk_idx * stride_osk_s,
-        shape=(N_CTX_Q, ACTUAL_BLOCK_DMODEL),
+        shape=(N_CTX_Q, BLOCK_DMODEL),
         strides=(stride_osk_m, 1),
         offsets=(start_m * BLOCK_M, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
@@ -426,8 +426,8 @@ def load_dequantize_k_v_group(
     # use group_id to advance the pointers to the current group.
 
     # Advance to the current quantization group
-    K_block_ptr = tl.advance(K_block_ptr, (BLOCK_DMODEL * group_id, 0))
-    V_block_ptr = tl.advance(V_block_ptr, (0, BLOCK_DMODEL * group_id))
+    K_block_ptr = tl.advance(K_block_ptr, (ACTUAL_BLOCK_DMODEL * group_id, 0))
+    V_block_ptr = tl.advance(V_block_ptr, (0, ACTUAL_BLOCK_DMODEL * group_id))
 
     # -- load k, v --
     k = tl.load(K_block_ptr, boundary_check=(1, ) if BOUNDS_CHECKS_N else ())
@@ -798,7 +798,7 @@ class _attention(torch.autograd.Function):
             print("split_k:", split_k)
 
         seqlen_q_ceil = (seqlen_q + BLOCK_M - 1) // BLOCK_M * BLOCK_M
-        out_splitk = torch.empty([batch_size * n_group_q * heads_per_group_q, split_k, seqlen_q_ceil, dim_q], dtype=torch.float32, device=q.device)
+        out_splitk = torch.empty([batch_size * n_group_q * heads_per_group_q, split_k, seqlen_q_ceil, dim_padded], dtype=torch.float32, device=q.device)
         metadata = torch.empty([batch_size * n_group_q * heads_per_group_q, 2, split_k, seqlen_q_ceil], dtype=torch.float32, device=q.device)
         lse = torch.empty((batch_size * n_group_q * heads_per_group_q, seqlen_q), device=q.device, dtype=torch.float32)
         grid = (triton.cdiv(seqlen_q, BLOCK_M), batch_size * n_group_q * heads_per_group_q, split_k)
@@ -869,9 +869,9 @@ class _attention(torch.autograd.Function):
         )
 
         if mqa_swap_seqlen_head:
-            out = torch.empty((batch_size, heads_per_group_q, n_group_q, seqlen_q, dim_q), device=q.device, dtype=q.dtype).transpose(1, 3)
+            out = torch.empty((batch_size, heads_per_group_q, n_group_q, seqlen_q, dim_padded), device=q.device, dtype=q.dtype).transpose(1, 3)
         else:
-            out = torch.empty((batch_size, seqlen_q, n_group_q, heads_per_group_q, dim_q), device=q.device, dtype=q.dtype)
+            out = torch.empty((batch_size, seqlen_q, n_group_q, heads_per_group_q, dim_padded), device=q.device, dtype=q.dtype)
 
         if DEBUG:
             print("after _fwd_kernel_splitK")
@@ -933,17 +933,17 @@ class _attention(torch.autograd.Function):
         if seqlen_k == 0:
             out.zero_()
         if mqa_swap_seqlen_head:
-            out = out.reshape(batch_size, -1, seqlen_q * n_group_q, dim_q).transpose(1, 2).contiguous()
+            out = out.reshape(batch_size, -1, seqlen_q * n_group_q, dim_padded).transpose(1, 2).contiguous()
         else:
-            out = out.reshape(batch_size, heads_per_group_q * n_group_q, -1, dim_q).contiguous()
+            out = out.reshape(batch_size, heads_per_group_q * n_group_q, -1, dim_padded).contiguous()
 
         # output is batch_size, heads_per_group_q * group_q, seqlen_q, dim_q
         if original_layout == "bshd":
             # out=out.transpose(1, 2).contiguous() # this screws up heads and data.
             # the data is laid out properly. Just need to reshape dims
-            out = out.reshape(batch_size, seqlen_q, -1, dim_q)
+            out = out.reshape(batch_size, seqlen_q, -1, dim_padded)
 
-        return out
+        return out.narrow(-1, 0, dim_q)
 
 
 attention_decode = _attention.apply

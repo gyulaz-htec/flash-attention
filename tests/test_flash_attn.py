@@ -2239,8 +2239,8 @@ def test_flash_attn_kvcache(
         if has_leftpad == True:
             pytest.skip("cache_leftpad not supported on AMD yet")
 
-        # if skip_config(seqlen_q, seqlen_k, d):
-        #     pytest.skip("Randomly skipping this configuration to limited test time")
+        if skip_config(seqlen_q, seqlen_k, d):
+            pytest.skip("Randomly skipping this configuration to limited test time")
 
     if seqlen_q > seqlen_k and new_kv:
         pytest.skip()

@@ -27,7 +27,7 @@ jobs:
         id: set-matrix
         run: |
           if [ x"${{ github.repository }}" == x"ROCm/flash-attention" ]; then
-            echo '::set-output name=matrix-HIP::[["self-hosted", "rocm", "gfx942"]]'
+            echo '::set-output name=matrix-HIP::[["self-hosted", "rocm"]]'
           else
             echo '::set-output name=matrix-HIP::[["ubuntu-latest"]]'
           fi
@@ -56,18 +56,18 @@ jobs:
       - name: Build
         run: |
           python setup.py install
-      # - name: Flash Attention qkvpacked Tests
-      #   run: |
-      #     pytest tests/test_flash_attn.py::test_flash_attn_qkvpacked
-      #     pytest tests/test_flash_attn.py::test_flash_attn_varlen_qkvpacked
-      # - name: Flash Attention output Tests
-      #   run: |
-      #     pytest tests/test_flash_attn.py::test_flash_attn_output
-      #     pytest tests/test_flash_attn.py::test_flash_attn_varlen_output
-      # - name: Flash Attention causal Tests
-      #   run: |
-      #     pytest tests/test_flash_attn.py::test_flash_attn_causal
-      #     pytest tests/test_flash_attn.py::test_flash_attn_varlen_causal
+      - name: Flash Attention qkvpacked Tests
+        run: |
+          pytest tests/test_flash_attn.py::test_flash_attn_qkvpacked
+          pytest tests/test_flash_attn.py::test_flash_attn_varlen_qkvpacked
+      - name: Flash Attention output Tests
+        run: |
+          pytest tests/test_flash_attn.py::test_flash_attn_output
+          pytest tests/test_flash_attn.py::test_flash_attn_varlen_output
+      - name: Flash Attention causal Tests
+        run: |
+          pytest tests/test_flash_attn.py::test_flash_attn_causal
+          pytest tests/test_flash_attn.py::test_flash_attn_varlen_causal
       - name: Flash Attention kvcache Tests
         run: |
           pytest tests/test_flash_attn.py::test_flash_attn_kvcache

@@ -123,8 +123,15 @@ def _fwd_kernel_splitK(
 
 
     # Padding
+    # print("ACTUAL_BLOCK_DMODEL:", ACTUAL_BLOCK_DMODEL)
+    # print("BLOCK_DMODEL:", BLOCK_DMODEL)
     PADDED_HEAD: tl.constexpr = (ACTUAL_BLOCK_DMODEL != BLOCK_DMODEL)
-    d_mask = tl.arange(0, BLOCK_DMODEL) < ACTUAL_BLOCK_DMODEL
+    # print("PADDED_HEAD:", PADDED_HEAD)
+    if PADDED_HEAD:
+        d_mask = tl.arange(0, BLOCK_DMODEL) < ACTUAL_BLOCK_DMODEL
+        # print("d_mask:", d_mask)
+    
+    
 
     start_m = tl.program_id(0)
     off_zhg = tl.program_id(1)
@@ -171,6 +178,7 @@ def _fwd_kernel_splitK(
     v_base = V + v_head_idx * stride_vh + cache_batch_idx * stride_vz + off_g_q * stride_vg
 
     # Copy new Keys and Values into Cache
+    # print("NEW_KV", NEW_KV)
     if NEW_KV:
         knew_base = K_new + k_head_idx * stride_kn_h + off_z * stride_kn_z + off_g_q * stride_kn_g
         
@@ -683,13 +691,13 @@ class _attention(torch.autograd.Function):
     NAME = "triton_splitKF"
 
     @staticmethod
-    def forward(cls, q, k_cache, v_cache, input_metadata):
+    def forward(cls, q, k, v, input_metadata):
         if DEBUG:
             print()
             print("attention_decode.forward")
             print("q:", q, q.shape)
-            print("k:", k_cache, k_cache.shape)
-            print("v:", v_cache, v_cache.shape)
+            print("k:", k, k.shape)
+            print("v:", v, v.shape)
             print("input_metadata:", input_metadata)
 
         original_layout = input_metadata.layout
@@ -697,8 +705,8 @@ class _attention(torch.autograd.Function):
         # kernels expects "bsghd"
         if input_metadata.layout == "bshd":
             q=q.unsqueeze(2)
-            k_cache=k_cache.unsqueeze(2)
-            v_cache=v_cache.unsqueeze(2)
+            k=k.unsqueeze(2)
+            v=v.unsqueeze(2)
 
             if input_metadata.new_kv:
                 input_metadata.k_new = input_metadata.k_new.unsqueeze(2)
@@ -707,8 +715,8 @@ class _attention(torch.autograd.Function):
             input_metadata.layout = "bsghd"
         elif input_metadata.layout == "bhsd":
             q=q.permute(0, 2, 1, 3).unsqueeze(2)
-            k_cache=k_cache.permute(0, 2, 1, 3).unsqueeze(2)
-            v_cache=v_cache.permute(0, 2, 1, 3).unsqueeze(2)
+            k=k.permute(0, 2, 1, 3).unsqueeze(2)
+            v=v.permute(0, 2, 1, 3).unsqueeze(2)
             if input_metadata.new_kv:
                 input_metadata.k_new = input_metadata.k_new.permute(0, 2, 1, 3).unsqueeze(2)
                 input_metadata.v_new = input_metadata.v_new.permute(0, 2, 1, 3).unsqueeze(2)
@@ -722,11 +730,6 @@ class _attention(torch.autograd.Function):
 
         assert input_metadata.layout == "bsghd"
 
-        k = k_cache
-        v = v_cache
-        
-        
-        
         # get dims
         batch_size, seqlen_q, n_group_q, heads_per_group_q, dim_q = q.shape
         _, seqlen_k, n_group_k, heads_per_group_k, dim_k = k.shape
@@ -947,7 +950,7 @@ class _attention(torch.autograd.Function):
             # the data is laid out properly. Just need to reshape dims
             out = out.reshape(batch_size, seqlen_q, -1, dim_padded)
 
-        return out.narrow(-1, 0, dim_q)
+        return out.narrow(-1, 0, dim_k)
 
 
 attention_decode = _attention.apply

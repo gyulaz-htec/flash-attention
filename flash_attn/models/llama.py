@@ -13,9 +13,12 @@ import torch.nn.functional as F
 from sentencepiece import SentencePieceProcessor
 from transformers import GPT2Config, LlamaConfig
 
+from flash_attn.utils.rpd_tracing import rpd_trace
+
 from einops import rearrange
 
 
+@rpd_trace()
 def remap_state_dict_meta_llama(
     state_dict: Dict[str, torch.Tensor], config: GPT2Config
 ) -> Dict[str, torch.Tensor]:
@@ -24,12 +27,16 @@ def remap_state_dict_meta_llama(
     This function modifies state_dict in place.
     """
 
+    
+    @rpd_trace()
     def key_mapping_layers(key):
         return f"transformer.{key}" if not key.startswith("output.") else key
 
     state_dict = OrderedDict((key_mapping_layers(k), v) for k, v in state_dict.items())
 
     # Word embedding
+    
+    @rpd_trace()
     def key_mapping_emb(key):
         return re.sub(
             r"^transformer.tok_embeddings.", "transformer.embeddings.word_embeddings.", key
@@ -61,6 +68,8 @@ def remap_state_dict_meta_llama(
         )
 
     # LayerNorm
+    
+    @rpd_trace()
     def key_mapping_ln(key):
         key = re.sub(r"^transformer.norm.", r"transformer.ln_f.", key)
         key = re.sub(
@@ -80,6 +89,8 @@ def remap_state_dict_meta_llama(
         # Our ordering is different
         state_dict[f"transformer.layers.{l}.mlp.fc1.weight"] = torch.cat([w3, w1], dim=0)
 
+    
+    @rpd_trace()
     def key_mapping_mlp(key):
         return re.sub(
             r"^transformer.layers.(\d+).feed_forward.w2.",
@@ -98,6 +109,8 @@ def remap_state_dict_meta_llama(
         # We don't store these
         state_dict.pop(f"transformer.layers.{l}.attention.inner_attention.rope.freqs", None)
 
+    
+    @rpd_trace()
     def key_mapping_attn(key):
         return re.sub(
             r"^transformer.layers.(\d+).attention.wo.",
@@ -112,6 +125,8 @@ def remap_state_dict_meta_llama(
     return state_dict
 
 
+
+@rpd_trace()
 def remap_state_dict_hf_llama(
     state_dict: Dict[str, torch.Tensor], config: GPT2Config
 ) -> Dict[str, torch.Tensor]:
@@ -120,7 +135,8 @@ def remap_state_dict_hf_llama(
     This function modifies state_dict in place.
     """
 
-    # Embedding
+    
+    @rpd_trace()# Embedding
     def key_mapping_emb(key):
         return re.sub(r"^model.embed_tokens.", "transformer.embeddings.word_embeddings.", key)
 
@@ -160,6 +176,7 @@ def remap_state_dict_hf_llama(
         w3 = state_dict.pop(f"model.layers.{l}.mlp.up_proj.weight")
         state_dict[f"transformer.layers.{l}.mlp.fc1.weight"] = torch.cat([w3, w1], dim=0)
 
+    @rpd_trace()
     def key_mapping_mlp(key):
         return re.sub(
             r"^model.layers.(\d+).mlp.down_proj.",
@@ -169,7 +186,8 @@ def remap_state_dict_hf_llama(
 
     state_dict = OrderedDict((key_mapping_mlp(k), v) for k, v in state_dict.items())
 
-    # LayerNorm
+    
+    @rpd_trace()# LayerNorm
     def key_mapping_ln(key):
         key = re.sub(r"^model.norm.", r"transformer.ln_f.", key)
         key = re.sub(
@@ -186,6 +204,7 @@ def remap_state_dict_hf_llama(
 
     state_dict = OrderedDict((key_mapping_ln(k), v) for k, v in state_dict.items())
 
+    @rpd_trace()
     def inv_permute(w):
         # Inverse of permute implemented in:
         # https://github.com/huggingface/transformers/blob/b42010bb1d3cbf262d27e0a328661885be46dfdb/src/transformers/models/llama/convert_llama_weights_to_hf.py#L114
@@ -205,6 +224,7 @@ def remap_state_dict_hf_llama(
         # We don't store these
         state_dict.pop(f"model.layers.{l}.self_attn.rotary_emb.inv_freq", None)
 
+    @rpd_trace()
     def key_mapping_attn(key):
         return re.sub(
             r"^model.layers.(\d+).self_attn.o_proj.",
@@ -216,6 +236,7 @@ def remap_state_dict_hf_llama(
     return state_dict
 
 
+@rpd_trace()
 def inv_remap_state_dict_hf_llama(
     state_dict: Dict[str, torch.Tensor], config: GPT2Config
 ) -> Dict[str, torch.Tensor]:
@@ -229,7 +250,8 @@ def inv_remap_state_dict_hf_llama(
     This function modifies state_dict in place.
     """
 
-    # Embedding
+    
+    @rpd_trace()# Embedding
     def key_mapping_emb(key):
         return re.sub(r"^transformer.embeddings.word_embeddings.", "model.embed_tokens.", key)
 
@@ -264,6 +286,7 @@ def inv_remap_state_dict_hf_llama(
         state_dict[f"model.layers.{l}.mlp.gate_proj.weight"] = w1
         state_dict[f"model.layers.{l}.mlp.up_proj.weight"] = w3
 
+    @rpd_trace()
     def key_mapping_mlp(key):
         return re.sub(
             r"^transformer.layers.(\d+).mlp.fc2.",
@@ -273,7 +296,8 @@ def inv_remap_state_dict_hf_llama(
 
     state_dict = OrderedDict((key_mapping_mlp(k), v) for k, v in state_dict.items())
 
-    # LayerNorm
+    
+    @rpd_trace()# LayerNorm
     def key_mapping_ln(key):
         key = re.sub(r"^transformer.ln_f.", r"model.norm.", key)
         key = re.sub(
@@ -290,6 +314,7 @@ def inv_remap_state_dict_hf_llama(
 
     state_dict = OrderedDict((key_mapping_ln(k), v) for k, v in state_dict.items())
 
+    @rpd_trace()
     def permute(w):
         return rearrange(
             w, "(h d two) n -> (h two d) n", d=config.n_embd // config.n_head // 2, two=2
@@ -315,6 +340,7 @@ def inv_remap_state_dict_hf_llama(
         state_dict[f"model.layers.{l}.self_attn.v_proj.weight"] = Wv
         state_dict.pop(f"transformer.layers.{l}.attention.inner_attention.rope.freqs", None)
 
+    @rpd_trace()
     def key_mapping_attn(key):
         return re.sub(
             r"^transformer.layers.(\d+).mixer.out_proj.",
@@ -326,6 +352,7 @@ def inv_remap_state_dict_hf_llama(
     return state_dict
 
 
+@rpd_trace()
 def config_from_meta_checkpoint(
     checkpoint_path: Union[str, os.PathLike], model_name: str
 ) -> LlamaConfig:
@@ -365,12 +392,14 @@ def config_from_meta_checkpoint(
     return config
 
 
+@rpd_trace()
 def config_from_hf_checkpoint(
     checkpoint_path: Union[str, os.PathLike], model_name: str
 ) -> LlamaConfig:
     return LlamaConfig.from_pretrained(Path(checkpoint_path) / f"{model_name}-hf" / "config.json")
 
 
+@rpd_trace()
 def config_from_checkpoint(
     checkpoint_path: Union[str, os.PathLike], model_name: str, checkpoint_format="meta"
 ) -> LlamaConfig:
@@ -380,6 +409,7 @@ def config_from_checkpoint(
         return config_from_hf_checkpoint(checkpoint_path, model_name)
 
 
+@rpd_trace()
 def state_dicts_from_checkpoint(
     checkpoint_path: Union[str, os.PathLike], model_name: str
 ) -> List[dict]:
@@ -390,6 +420,7 @@ def state_dicts_from_checkpoint(
     ]
 
 
+@rpd_trace()
 def llama_config_to_gpt2_config(llama_config: LlamaConfig) -> GPT2Config:
     return GPT2Config(
         vocab_size=llama_config.vocab_size,

@@ -4,6 +4,7 @@ from typing import Optional, Union
 
 import torch
 import torch.nn as nn
+from flash_attn.utils.rpd_tracing import rpd_trace
 
 # isort: off
 # We need to import the CUDA kernels after importing torch
@@ -11,9 +12,11 @@ import flash_attn_2_cuda as flash_attn_cuda
 
 # isort: on
 
+@rpd_trace()
 def maybe_contiguous(x):
     return x.contiguous() if x is not None and x.stride(-1) != 1 else x
 
+@rpd_trace()
 def _get_block_size_n(device, head_dim, is_dropout, is_causal):
     # This should match the block sizes in the CUDA kernel
     assert head_dim <= 256
@@ -45,6 +48,7 @@ def _get_block_size_n(device, head_dim, is_dropout, is_causal):
         return 64
 
 
+@rpd_trace()
 def _flash_attn_forward(
     q, k, v, dropout_p, softmax_scale, causal, window_size, softcap, alibi_slopes, return_softmax
 ):
@@ -67,6 +71,7 @@ def _flash_attn_forward(
     return out, q, k, v, out_padded, softmax_lse, S_dmask, rng_state
 
 
+@rpd_trace()
 def _flash_attn_varlen_forward(
     q,
     k,
@@ -115,6 +120,7 @@ def _flash_attn_varlen_forward(
     return out, q, k, v, out_padded, softmax_lse, S_dmask, rng_state
 
 
+@rpd_trace()
 def _flash_attn_backward(
     dout,
     q,
@@ -165,6 +171,7 @@ def _flash_attn_backward(
     return dq, dk, dv, softmax_d
 
 
+@rpd_trace()
 def _flash_attn_varlen_backward(
     dout,
     q,
@@ -227,7 +234,9 @@ def _flash_attn_varlen_backward(
 
 
 class FlashAttnQKVPackedFunc(torch.autograd.Function):
+    
     @staticmethod
+    @rpd_trace(name="FlashAttnQKVPackedFunc")
     def forward(
         ctx,
         qkv,
@@ -264,7 +273,9 @@ class FlashAttnQKVPackedFunc(torch.autograd.Function):
         ctx.deterministic = deterministic
         return out if not return_softmax else (out, softmax_lse, S_dmask)
 
+    
     @staticmethod
+    @rpd_trace(name="FlashAttnQKVPackedFunc")
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse, rng_state = ctx.saved_tensors
         qkv_shape = q.shape[:-2] + (3, *q.shape[-2:])
@@ -293,7 +304,9 @@ class FlashAttnQKVPackedFunc(torch.autograd.Function):
 
 
 class FlashAttnVarlenQKVPackedFunc(torch.autograd.Function):
+    
     @staticmethod
+    @rpd_trace(name="FlashAttnVarlenQKVPackedFunc")
     def forward(
         ctx,
         qkv,
@@ -338,7 +351,9 @@ class FlashAttnVarlenQKVPackedFunc(torch.autograd.Function):
         ctx.deterministic = deterministic
         return out if not return_softmax else (out, softmax_lse, S_dmask)
 
+    
     @staticmethod
+    @rpd_trace(name="FlashAttnVarlenQKVPackedFunc")
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse, cu_seqlens, rng_state = ctx.saved_tensors
         qkv_shape = q.shape[:-2] + (3, *q.shape[-2:])
@@ -371,7 +386,9 @@ class FlashAttnVarlenQKVPackedFunc(torch.autograd.Function):
 
 
 class FlashAttnKVPackedFunc(torch.autograd.Function):
+    
     @staticmethod
+    @rpd_trace(name="FlashAttnKVPackedFunc")
     def forward(
         ctx,
         q,
@@ -409,7 +426,9 @@ class FlashAttnKVPackedFunc(torch.autograd.Function):
         ctx.deterministic = deterministic
         return out if not return_softmax else (out, softmax_lse, S_dmask)
 
+    
     @staticmethod
+    @rpd_trace(name="FlashAttnKVPackedFunc")
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse, rng_state = ctx.saved_tensors
         dq = torch.empty_like(q)
@@ -440,7 +459,9 @@ class FlashAttnKVPackedFunc(torch.autograd.Function):
 
 
 class FlashAttnVarlenKVPackedFunc(torch.autograd.Function):
+    
     @staticmethod
+    @rpd_trace(name="FlashAttnVarlenKVPackedFunc")
     def forward(
         ctx,
         q,
@@ -491,7 +512,9 @@ class FlashAttnVarlenKVPackedFunc(torch.autograd.Function):
         ctx.deterministic = deterministic
         return out if not return_softmax else (out, softmax_lse, S_dmask)
 
+    
     @staticmethod
+    @rpd_trace(name="FlashAttnVarlenKVPackedFunc")
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, rng_state = ctx.saved_tensors
         dq = torch.empty_like(q)
@@ -526,7 +549,9 @@ class FlashAttnVarlenKVPackedFunc(torch.autograd.Function):
 
 
 class FlashAttnFunc(torch.autograd.Function):
+    
     @staticmethod
+    @rpd_trace(name="FlashAttnFunc")
     def forward(
         ctx,
         q,
@@ -565,7 +590,9 @@ class FlashAttnFunc(torch.autograd.Function):
         ctx.deterministic = deterministic
         return out if not return_softmax else (out, softmax_lse, S_dmask)
 
+    
     @staticmethod
+    @rpd_trace(name="FlashAttnFunc")
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse, rng_state = ctx.saved_tensors
         dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
@@ -595,7 +622,9 @@ class FlashAttnFunc(torch.autograd.Function):
 
 
 class FlashAttnVarlenFunc(torch.autograd.Function):
+    
     @staticmethod
+    @rpd_trace(name="FlashAttnVarlenFunc")
     def forward(
         ctx,
         q,
@@ -648,7 +677,9 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         ctx.deterministic = deterministic
         return out if not return_softmax else (out, softmax_lse, S_dmask)
 
+    
     @staticmethod
+    @rpd_trace(name="FlashAttnVarlenFunc")
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, rng_state = ctx.saved_tensors
         dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
@@ -681,6 +712,7 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         return dq, dk, dv, None, None, None, None, None, None, None, None, None, None, None, None, None
 
 
+@rpd_trace()
 def flash_attn_qkvpacked_func(
     qkv,
     dropout_p=0.0,
@@ -739,6 +771,7 @@ def flash_attn_qkvpacked_func(
     )
 
 
+@rpd_trace()
 def flash_attn_kvpacked_func(
     q,
     kv,
@@ -816,6 +849,7 @@ def flash_attn_kvpacked_func(
     )
 
 
+@rpd_trace()
 def flash_attn_func(
     q,
     k,
@@ -892,6 +926,7 @@ def flash_attn_func(
     )
 
 
+@rpd_trace()
 def flash_attn_varlen_qkvpacked_func(
     qkv,
     cu_seqlens,
@@ -957,6 +992,7 @@ def flash_attn_varlen_qkvpacked_func(
     )
 
 
+@rpd_trace()
 def flash_attn_varlen_kvpacked_func(
     q,
     kv,
@@ -1048,6 +1084,7 @@ def flash_attn_varlen_kvpacked_func(
     )
 
 
+@rpd_trace()
 def flash_attn_varlen_func(
     q,
     k,
@@ -1141,6 +1178,7 @@ def flash_attn_varlen_func(
     )
 
 
+@rpd_trace()
 def flash_attn_with_kvcache(
     q,
     k_cache,
